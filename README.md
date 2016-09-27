@@ -1,7 +1,7 @@
 simple-middleware-go
 --------------------
 
-[![GoDoc](https://godoc.org/github.com/Mparaiso/simple-middleware-go?status.png)](https://godoc.org/Mparaiso/simple-middleware-go)
+[![GoDoc](https://godoc.org/github.com/Mparaiso/simple-middleware-go?status.png)](https://godoc.org/github.com/Mparaiso/simple-middleware-go)
 
 [![Build Status](https://travis-ci.org/Mparaiso/simple-middleware-go.svg?branch=master)](https://travis-ci.org/Mparaiso/simple-middleware-go)
 
