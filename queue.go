@@ -24,7 +24,7 @@ type Container interface {
 	Request() *http.Request
 }
 
-// DefaultContainer is the default implementation of the Context
+// DefaultContainer is the default implementation of the Container
 type DefaultContainer struct {
 	RW  http.ResponseWriter // ResponseWriter
 	Req *http.Request       // Request
@@ -36,7 +36,7 @@ func (dc DefaultContainer) ResponseWriter() http.ResponseWriter { return dc.RW }
 // Request returns a request
 func (dc DefaultContainer) Request() *http.Request { return dc.Req }
 
-// GetPathValues return URL variables
+// GetURLValues return URL variables
 func (dc *DefaultContainer) GetURLValues() *url.Values {
 	values := dc.Request().Context().Value(router.URLValues)
 	if values == nil {
