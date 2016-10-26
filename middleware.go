@@ -1,13 +1,6 @@
 package middleware
 
-import (
-	"context"
-	"fmt"
-	router "github.com/mparaiso/simple-router-go"
-	"net/http"
-	"net/url"
-	"time"
-)
+import "net/http"
 
 // StatusError is a status error
 // it can be used to convert a http status to
@@ -18,55 +11,64 @@ func (se StatusError) Error() string {
 	return http.StatusText(int(se))
 }
 
+func (se StatusError) Code() int {
+	return int(se)
+}
+
 // Container contains server values
 type Container interface {
-	ResponseWriter() http.ResponseWriter
-	Request() *http.Request
+	GetResponseWriter() http.ResponseWriter
+	GetRequest() *http.Request
+	Error(err error, statusCode int)
+	Redirect(url string, statusCode int)
+}
+
+const (
+	Debug int = iota
+	Info
+	Warning
+	Error
+	Critical
+)
+
+type LoggerProvider interface {
+	GetLogger() (Logger, error)
+	MustGetLogger() Logger
+}
+
+type Logger interface {
+	Log(level int, args ...interface{})
+	LogF(level int, format string, args ...interface{})
 }
 
 // DefaultContainer is the default implementation of the Container
 type DefaultContainer struct {
-	RW  http.ResponseWriter // ResponseWriter
-	Req *http.Request       // Request
+	ResponseWriter http.ResponseWriter // ResponseWriter
+	Request        *http.Request       // Request
 }
 
 // ResponseWriter returns a response writer
-func (dc DefaultContainer) ResponseWriter() http.ResponseWriter { return dc.RW }
+func (dc DefaultContainer) GetResponseWriter() http.ResponseWriter { return dc.ResponseWriter }
 
 // Request returns a request
-func (dc DefaultContainer) Request() *http.Request { return dc.Req }
-
-// GetURLValues return URL variables
-func (dc *DefaultContainer) GetURLValues() *url.Values {
-	values := dc.Request().Context().Value(router.URLValues)
-	if values == nil {
-		dc.Req = dc.Req.WithContext(context.WithValue(dc.Request().Context(), router.URLValues, new(url.Values)))
-		values = dc.Req.Context().Value(router.URLValues)
-	}
-	return values.(*url.Values)
-}
+func (dc DefaultContainer) GetRequest() *http.Request { return dc.Request }
 
 // Error writes an error to the client and logs an error to stdout
-func (dc *DefaultContainer) Error(statusCode int, err error) {
-	http.Error(dc.ResponseWriter(), http.StatusText(statusCode), statusCode)
-	fmt.Printf("[ERROR] %s [%s] \"%s %s %d\" : %s \n", dc.Request().RemoteAddr, time.Now().Format(""), dc.Request().Method, dc.Request().URL.RequestURI(), statusCode, err)
+func (dc DefaultContainer) Error(err error, statusCode int) {
+	http.Error(dc.GetResponseWriter(), err.Error(), statusCode)
 }
 
 // Redirect replies with a redirection
-func (dc *DefaultContainer) Redirect(url string, statusCode int) {
-	http.Redirect(dc.ResponseWriter(), dc.Request(), url, statusCode)
+func (dc DefaultContainer) Redirect(url string, statusCode int) {
+	http.Redirect(dc.GetResponseWriter(), dc.GetRequest(), url, statusCode)
 }
 
 // Handler is a controller that takes a context
 type Handler func(Container)
 
 // Wrap wraps Route.Handler with each middleware and returns a new Route
-func (h Handler) Wrap(middlewares ...func(Handler) Handler) Handler {
-	handler := h
-	for i := len(middlewares) - 1; i == 0; i-- {
-		handler = middlewares[i](handler)
-	}
-	return handler
+func (h Handler) Wrap(middlewares ...Middleware) Handler {
+	return Queue(middlewares).Finish(h)
 }
 
 func (h Handler) Handle(c Container) {
@@ -74,33 +76,74 @@ func (h Handler) Handle(c Container) {
 }
 
 // ToHandlerFunc converts Handler to http.Handler
-func (h Handler) ToHandlerFunc(containerFactory func(rw http.ResponseWriter, r *http.Request) Container) func(rw http.ResponseWriter, r *http.Request) {
-	return func(rw http.ResponseWriter, r *http.Request) {
-		c := containerFactory(rw, r)
+func (h Handler) ToHandlerFunc(containerFactory func(http.ResponseWriter, *http.Request) Container) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var c Container
+		if containerFactory == nil {
+			c = &DefaultContainer{w, r}
+		} else {
+			c = containerFactory(w, r)
+		}
 		h(c)
 	}
 }
 
 // ToMiddleware wraps a classic net/http middleware (func(http.HandlerFunc) http.HandlerFunc)
 // into a Middleware compatible with this package
-func ToMiddleware(middleware func(http.HandlerFunc) http.HandlerFunc) Middleware {
-	return func(h Handler) Handler {
-		return func(c Container) {
-			middleware(h.ToHandlerFunc(func(rw http.ResponseWriter, r *http.Request) Container {
-				return c
-			})).ServeHTTP(c.ResponseWriter(), c.Request())
-		}
+func ToMiddleware(classicMiddleware func(http.HandlerFunc) http.HandlerFunc) Middleware {
+	return func(c Container, next Handler) {
+		classicMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			next(&DefaultContainer{w, r})
+		})(c.GetResponseWriter(), c.GetRequest())
 	}
 }
 
-type Middleware func(Handler) Handler
+//Queue is a reusable queue of middlewares
+type Queue []Middleware
 
+func (q Queue) Then(middleware Middleware) Middleware {
+	var current Middleware
+	for _, middleware := range q {
+		if current == nil {
+			current = middleware
+		} else {
+			current = current.Then(middleware)
+		}
+	}
+	return current
+}
+
+// Finish returns a new queue of middlewares
+func (q Queue) Finish(h Handler) Handler {
+	var current Middleware
+	if len(q) == 0 {
+		return h
+	}
+	for _, middleware := range q {
+		if current == nil {
+			current = middleware
+		} else {
+			current = current.Then(middleware)
+		}
+	}
+	return current.Finish(h)
+}
+
+// Middleware is a function that takes an Handler and returns a new Handler
+type Middleware func(container Container, next Handler)
+
+// Then allows to chain middlewares by returning a
+// new middleware wrapped by the previous middleware in the chain
 func (m Middleware) Then(middleware Middleware) Middleware {
-	return func(h Handler) Handler {
-		return m(middleware(h))
+	return func(c Container, next Handler) {
+		m(c, func(c Container) {
+			middleware(c, next)
+		})
 	}
 }
 
 func (m Middleware) Finish(h Handler) Handler {
-	return m(h)
+	return func(c Container) {
+		m(c, h)
+	}
 }

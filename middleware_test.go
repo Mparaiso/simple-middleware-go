@@ -2,24 +2,29 @@ package middleware_test
 
 import (
 	"fmt"
-	m "github.com/mparaiso/simple-middleware-go"
 	"net/http"
 	"net/http/httptest"
+
+	m "github.com/mparaiso/simple-middleware-go"
 )
 
 func ExampleMiddleware_Then() {
 
 	// Let's chain middlewares thanks to the Then method
 
-	middleware1 := func(next m.Handler) m.Handler {
-		return func(c m.Container) { fmt.Print(1); next(c) }
-	}
-	middleware2 := func(next m.Handler) m.Handler {
-		return func(c m.Container) { fmt.Print(2); next(c) }
-	}
-	middleware3 := func(next m.Handler) m.Handler {
-		return func(c m.Container) { fmt.Print(3); next(c) }
-	}
+	middleware1, middleware2, middleware3 := func(c m.Container, next m.Handler) {
+		fmt.Print(1)
+		next(c)
+	},
+		func(c m.Container, next m.Handler) {
+			fmt.Print(2)
+			next(c)
+		},
+		func(c m.Container, next m.Handler) {
+			fmt.Print(3)
+			next(c)
+		}
+
 	m.Middleware(middleware1).
 		Then(middleware2).
 		Then(middleware3).
@@ -28,6 +33,37 @@ func ExampleMiddleware_Then() {
 
 	// Output:
 	// 123Handle the request
+}
+
+func ExampleMiddleware_Queue() {
+	m.Queue([]m.Middleware{
+		func(c m.Container, next m.Handler) {
+			fmt.Print(1)
+			next(c)
+		},
+		func(c m.Container, next m.Handler) {
+			fmt.Print(2)
+			next(c)
+		},
+		func(c m.Container, next m.Handler) {
+			fmt.Print(3)
+			next(c)
+		},
+	}).Finish(func(c m.Container) {
+		fmt.Print("Finish")
+	}).Handle(nil)
+
+	// Output:
+	// 123Finish
+}
+
+func ExampleHandler_Wrap() {
+	m.Handler(func(c m.Container) {
+		fmt.Print("Done")
+	}).Wrap(func(c m.Container, next m.Handler) { fmt.Print(1); next(c) }, func(c m.Container, next m.Handler) { fmt.Print(2); next(c) }).
+		Handle(nil)
+	// Output:
+	// 12Done
 }
 
 func ExampleToMiddleware() {
@@ -48,7 +84,7 @@ func ExampleToMiddleware() {
 	response := httptest.NewRecorder()
 
 	convertedMiddleware.
-		Finish(func(c m.Container) { c.ResponseWriter().Write([]byte("done")) }).
+		Finish(func(c m.Container) { c.GetResponseWriter().Write([]byte("done")) }).
 		Handle(&m.DefaultContainer{response, request})
 
 	fmt.Println(response.Header().Get("Access-Control-Allow-Origin"))
